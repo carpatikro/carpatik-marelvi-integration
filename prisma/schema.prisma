@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model MarelviSyncState {
+  id             String   @id @default("primary")
+  cursor         Int      @default(0)
+  lockToken      String?
+  lockedUntil    DateTime?
+  lastCycleAt    DateTime?
+  updatedAt      DateTime @updatedAt
+}
+
+model MarelviSyncRun {
+  id              String    @id @default(cuid())
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  status          String    @default("running")
+  dryRun          Boolean   @default(true)
+  feedCount       Int       @default(0)
+  processedCount  Int       @default(0)
+  matchedCount    Int       @default(0)
+  unmatchedCount  Int       @default(0)
+  ambiguousCount  Int       @default(0)
+  priceCandidates Int       @default(0)
+  stockCandidates Int       @default(0)
+  priceUpdated    Int       @default(0)
+  stockUpdated    Int       @default(0)
+  skippedCount    Int       @default(0)
+  details         Json?
+  errorCode       String?
+}
+
+model MarelviProductSnapshot {
+  sku             String   @id
+  title           String
+  brand           String
+  availability    String
+  netPrice        Decimal  @db.Decimal(12, 2)
+  greenFeeNet     Decimal  @db.Decimal(12, 2)
+  calculatedPrice Decimal? @db.Decimal(12, 2)
+  compareAtPrice  Decimal? @db.Decimal(12, 2)
+  desiredStock    Int
+  sourceHash      String
+  lastPriceSyncedHash String?
+  lastStockSyncedHash String?
+  lastSeenAt      DateTime @default(now())
+  lastSyncedAt    DateTime?
+  updatedAt       DateTime @updatedAt
+}
