@@ -16,7 +16,7 @@ Standalone scheduled integration for Marelvi → Shopify Carpatik (`veprzg-ph.my
 
 Set secrets in Vercel Project → Settings → Environment Variables; never put feed URLs, credentials, or `CRON_SECRET` in Git.
 
-- `DATABASE_URL`: dedicated Marelvi Neon PostgreSQL connection string.
+- `DATABASE_URL`: PostgreSQL connection string supplied by the Prisma Postgres integration connected to this Vercel project.
 - `MARELVI_FEED_URL`: private HTTPS JSON feed URL from the Marelvi B2B account. The URL is not emitted to logs.
 - `SHOPIFY_SHOP_DOMAIN`: `veprzg-ph.myshopify.com`.
 - `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET`: Shopify Dev Dashboard app credentials with the required Admin API scopes.
@@ -27,12 +27,12 @@ Set secrets in Vercel Project → Settings → Environment Variables; never put 
 ## Deployment and database
 
 1. Install dependencies and run `npm run build`.
-2. Create a separate Neon database and set `DATABASE_URL` in Vercel.
-3. Apply the first migration with `npx prisma migrate deploy`.
+2. Connect a Prisma Postgres database to this Vercel project so `DATABASE_URL` is available in Production.
+3. The deployment build runs `prisma migrate deploy` before compiling the app. The migration only creates the three `Marelvi*` tables used by this integration.
 4. Add the remaining secret environment variables in Vercel and deploy.
 5. Verify `/api/health`, then invoke `/api/cron/marelvi-sync` with `Authorization: Bearer <CRON_SECRET>` for a dry-run. Vercel Cron also sends this header when `CRON_SECRET` is configured.
 
-The cron runs every 15 minutes and processes up to 500 supplier products per invocation. Progress, lock state, and run summaries are persisted in Neon. Shopify writes use the dedicated location and inventory compare-and-swap values. Errors store safe codes only; API response bodies and the feed URL are not logged.
+The cron runs every 15 minutes and processes up to 500 supplier products per invocation. Progress, lock state, and run summaries are persisted in PostgreSQL. Shopify writes use the dedicated location and inventory compare-and-swap values. Errors store safe codes only; API response bodies and the feed URL are not logged.
 
 ## Local checks
 
