@@ -1,0 +1,2 @@
+-- Baseline marker for the pre-existing Prisma Postgres schema.
+-- This integration owns only the Marelvi* tables added by later migrations.
