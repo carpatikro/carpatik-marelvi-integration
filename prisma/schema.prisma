@@ -9,7 +9,8 @@ datasource db {
 
 model MarelviSyncState {
   id             String   @id @default("primary")
-  cursor         Int      @default(0)
+  cursor         Int      @default(0) // Legacy Marelvi-feed offset; retained for compatibility.
+  shopifyCursor  String?  // Opaque Shopify variant cursor for Shopify-first traversal.
   lockToken      String?
   lockedUntil    DateTime?
   lastCycleAt    DateTime?
