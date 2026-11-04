@@ -4,11 +4,13 @@ Standalone scheduled integration for Marelvi → Shopify Carpatik (`veprzg-ph.my
 
 ## Business rules
 
-- Match `cod` to Shopify variant SKU. Existing products only; no product creation.
+- Shopify is the traversal source: process existing Shopify variants in cursor-based batches, then match each SKU against the current Marelvi feed. No product creation.
+- A variant is eligible for either price or stock updates only when its SKU exists in the Marelvi feed, it has a unique Shopify SKU match, and it already has an active inventory level at `Rudeni Marelvi depozit`. If both Marelvi EAN and Shopify barcode exist, they must also match. Products that fail any identity check are left unchanged.
+- Shopify variants at the Marelvi location whose SKU is absent from the feed are counted for visibility but left unchanged. Supplier feed items without a matching eligible Shopify variant are also left unchanged.
 - Purchase price is Marelvi `pret_net` (the current B2B price) plus `taxa_verde_net`, then VAT 21% and 20% markup: `(pret_net + taxa_verde_net) × 1.21 × 1.20`.
 - Artificial compare-at price is 10% above calculated selling price.
 - Availability mapping: `In stoc` → 10; `Stoc limitat` → 5; `La comanda` / `Comanda speciala` → 0.
-- Inventory is queried and written only at the existing `Rudeni Marelvi depozit` location. Products without tracking or an active inventory level there are reported and skipped for stock; the sync does not change tracking or activate inventory.
+- Inventory is queried and written only at the existing `Rudeni Marelvi depozit` location. Products without an active level there are not eligible for either price or stock updates; untracked items are skipped for stock. The sync does not change tracking or activate inventory.
 - Missing Marelvi items never cause Shopify stock to be set to zero. Product status and other locations are not changed.
 - Live writes are disabled unless `MARELVI_LIVE_SYNC_ENABLED=true`. Keep it false through dry-run review and enable only after explicit approval.
 
@@ -32,7 +34,7 @@ Set secrets in Vercel Project → Settings → Environment Variables; never put 
 4. Add the remaining secret environment variables in Vercel and deploy.
 5. Verify `/api/health`, then invoke `/api/cron/marelvi-sync` with `Authorization: Bearer <CRON_SECRET>` for a dry-run. Vercel Cron also sends this header when `CRON_SECRET` is configured.
 
-The cron runs every 15 minutes and processes up to 500 supplier products per invocation. Progress, lock state, and run summaries are persisted in PostgreSQL. Shopify writes use the dedicated location and inventory compare-and-swap values. Errors store safe codes only; API response bodies and the feed URL are not logged.
+The cron runs five minutes after the NOD schedule and processes up to 1,000 Shopify variants per invocation. The opaque Shopify pagination cursor, lock state, and run summaries are persisted in PostgreSQL. Shopify writes use only feed-matched variants already assigned to the dedicated Marelvi location and use inventory compare-and-swap values. Errors store safe codes only; API response bodies and the feed URL are not logged.
 
 ## Local checks
 
