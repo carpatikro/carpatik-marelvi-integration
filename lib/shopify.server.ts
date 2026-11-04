@@ -10,6 +10,7 @@ const graphqlUrl = `https://${shopDomain}/admin/api/${apiVersion}/graphql.json`;
 type ShopifyVariant = {
   id: string;
   sku: string | null;
+  barcode: string | null;
   price: string;
   compareAtPrice: string | null;
   product: { id: string };
@@ -101,7 +102,7 @@ export async function findVariantsBySku(products: MarelviProduct[], locationId: 
       `query MarelviVariants($search: String!, $locationId: ID!) {
         productVariants(first: 100, query: $search) {
           nodes {
-            id sku price compareAtPrice product { id }
+            id sku barcode price compareAtPrice product { id }
             inventoryItem {
               id tracked
               inventoryLevel(locationId: $locationId) {
@@ -152,6 +153,7 @@ export async function findMarelviShopifyBatch(
   ambiguousSkus: string[];
   unmatchedCount: number;
   unmatchedLocationSkuCount: number;
+  identityMismatchCount: number;
   processedCount: number;
   nextCursor: string | null;
   cycleComplete: boolean;
@@ -162,6 +164,7 @@ export async function findMarelviShopifyBatch(
   let hasNextPage = true;
   let processedCount = 0;
   let unmatchedLocationSkuCount = 0;
+  let identityMismatchCount = 0;
 
   // Shopify is the traversal source. A variant is eligible only when its SKU
   // exists in the Marelvi feed and it already has an inventory level at the
@@ -175,7 +178,7 @@ export async function findMarelviShopifyBatch(
         nodes: ShopifyVariant[];
       };
     }>(
-      "query MarelviShopifyFirst($first: Int!, $after: String, $locationId: ID!) { productVariants(first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id sku price compareAtPrice product { id } inventoryItem { id tracked inventoryLevel(locationId: $locationId) { quantities(names: [\"available\"]) { name quantity } } } } } }",
+      "query MarelviShopifyFirst($first: Int!, $after: String, $locationId: ID!) { productVariants(first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id sku barcode price compareAtPrice product { id } inventoryItem { id tracked inventoryLevel(locationId: $locationId) { quantities(names: [\"available\"]) { name quantity } } } } } }",
       { first, after: cursor, locationId },
     );
 
@@ -183,8 +186,13 @@ export async function findMarelviShopifyBatch(
       processedCount += 1;
       const sku = variant.sku?.trim();
       if (!sku || variant.inventoryItem.inventoryLevel === null) continue;
-      if (!feedBySku.has(sku)) {
+      const supplier = feedBySku.get(sku);
+      if (!supplier) {
         unmatchedLocationSkuCount += 1;
+        continue;
+      }
+      if (supplier.ean && variant.barcode && supplier.ean.trim() !== variant.barcode.trim()) {
+        identityMismatchCount += 1;
         continue;
       }
       candidatesBySku.set(sku, variant);
@@ -212,6 +220,7 @@ export async function findMarelviShopifyBatch(
   const ambiguousSkus = exactMatches.ambiguousSkus;
   const unmatchedCount =
     unmatchedLocationSkuCount +
+    identityMismatchCount +
     exactMatches.unmatchedSkus.length +
     candidateProducts.filter((product) => !matchedSkus.has(product.sku) && !ambiguousSkus.includes(product.sku)).length;
 
@@ -220,6 +229,7 @@ export async function findMarelviShopifyBatch(
     ambiguousSkus,
     unmatchedCount,
     unmatchedLocationSkuCount,
+    identityMismatchCount,
     processedCount,
     nextCursor: cursor,
     cycleComplete: !hasNextPage,
