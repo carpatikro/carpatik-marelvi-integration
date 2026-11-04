@@ -72,6 +72,7 @@ export type MarelviSyncResult = {
   stockUpdated?: number;
   stockSkipped?: number;
   unmatchedLocationSkuCount?: number;
+  identityMismatchCount?: number;
   cycleComplete?: boolean;
   zeroPriceSkus?: string[];
   unmatchedSkus?: string[];
@@ -207,6 +208,7 @@ export async function runMarelviSync(): Promise<MarelviSyncResult> {
         details: {
           ambiguousSkus: page.ambiguousSkus,
           unmatchedLocationSkuCount: page.unmatchedLocationSkuCount,
+          identityMismatchCount: page.identityMismatchCount,
           stockSkipped,
           zeroPriceSkus,
         },
@@ -235,6 +237,7 @@ export async function runMarelviSync(): Promise<MarelviSyncResult> {
       stockUpdated,
       stockSkipped,
       unmatchedLocationSkuCount: page.unmatchedLocationSkuCount,
+      identityMismatchCount: page.identityMismatchCount,
       cycleComplete: page.cycleComplete,
       unmatchedSkus: [],
       ambiguousSkus: page.ambiguousSkus,
