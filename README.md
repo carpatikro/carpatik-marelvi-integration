@@ -5,12 +5,12 @@ Standalone scheduled integration for Marelvi → Shopify Carpatik (`veprzg-ph.my
 ## Business rules
 
 - Shopify is the traversal source: process existing Shopify variants in cursor-based batches, then match each SKU against the current Marelvi feed. No product creation.
-- A variant is eligible for either price or stock updates only when its SKU exists in the Marelvi feed, it has a unique Shopify SKU match, and it already has an active inventory level at `Rudeni Marelvi depozit`. Products from other suppliers without that dedicated location assignment are never updated.
+- A variant is eligible for either price or stock updates only when its SKU exists in the Marelvi feed, it has a unique Shopify SKU match, and it already has an active inventory level at `Rudeni Marelvi depozit`. If both Marelvi EAN and Shopify barcode exist, they must also match. Products that fail any identity check are left unchanged.
 - Shopify variants at the Marelvi location whose SKU is absent from the feed are counted for visibility but left unchanged. Supplier feed items without a matching eligible Shopify variant are also left unchanged.
 - Purchase price is Marelvi `pret_net` (the current B2B price) plus `taxa_verde_net`, then VAT 21% and 20% markup: `(pret_net + taxa_verde_net) × 1.21 × 1.20`.
 - Artificial compare-at price is 10% above calculated selling price.
 - Availability mapping: `In stoc` → 10; `Stoc limitat` → 5; `La comanda` / `Comanda speciala` → 0.
-- Inventory is queried and written only at the existing `Rudeni Marelvi depozit` location. Products without tracking or an active inventory level there are not eligible for price updates and are skipped for stock; the sync does not change tracking or activate inventory.
+- Inventory is queried and written only at the existing `Rudeni Marelvi depozit` location. Products without an active level there are not eligible for either price or stock updates; untracked items are skipped for stock. The sync does not change tracking or activate inventory.
 - Missing Marelvi items never cause Shopify stock to be set to zero. Product status and other locations are not changed.
 - Live writes are disabled unless `MARELVI_LIVE_SYNC_ENABLED=true`. Keep it false through dry-run review and enable only after explicit approval.
 
