@@ -142,6 +142,90 @@ export async function findVariantsBySku(products: MarelviProduct[], locationId: 
   return { matches, unmatchedSkus, ambiguousSkus };
 }
 
+export async function findMarelviShopifyBatch(
+  feed: MarelviProduct[],
+  afterCursor: string | null,
+  locationId: string,
+  maxVariants: number,
+): Promise<{
+  matches: MatchedVariant[];
+  ambiguousSkus: string[];
+  unmatchedCount: number;
+  unmatchedLocationSkuCount: number;
+  processedCount: number;
+  nextCursor: string | null;
+  cycleComplete: boolean;
+}> {
+  const feedBySku = new Map(feed.map((product) => [product.sku, product]));
+  const candidatesBySku = new Map<string, ShopifyVariant>();
+  let cursor = afterCursor;
+  let hasNextPage = true;
+  let processedCount = 0;
+  let unmatchedLocationSkuCount = 0;
+
+  // Shopify is the traversal source. A variant is eligible only when its SKU
+  // exists in the Marelvi feed and it already has an inventory level at the
+  // dedicated Marelvi location. This keeps other supplier products out of both
+  // price and stock writes.
+  while (hasNextPage && processedCount < maxVariants) {
+    const first = Math.min(250, maxVariants - processedCount);
+    const data = await graphql<{
+      productVariants: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: ShopifyVariant[];
+      };
+    }>(
+      "query MarelviShopifyFirst($first: Int!, $after: String, $locationId: ID!) { productVariants(first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id sku price compareAtPrice product { id } inventoryItem { id tracked inventoryLevel(locationId: $locationId) { quantities(names: [\"available\"]) { name quantity } } } } } }",
+      { first, after: cursor, locationId },
+    );
+
+    for (const variant of data.productVariants.nodes) {
+      processedCount += 1;
+      const sku = variant.sku?.trim();
+      if (!sku || variant.inventoryItem.inventoryLevel === null) continue;
+      if (!feedBySku.has(sku)) {
+        unmatchedLocationSkuCount += 1;
+        continue;
+      }
+      candidatesBySku.set(sku, variant);
+    }
+
+    hasNextPage = data.productVariants.pageInfo.hasNextPage;
+    cursor = hasNextPage ? data.productVariants.pageInfo.endCursor : null;
+  }
+
+  const candidateProducts = Array.from(candidatesBySku.keys())
+    .map((sku) => feedBySku.get(sku))
+    .filter((product): product is MarelviProduct => product !== undefined);
+
+  // Re-query candidate SKUs across the full Shopify catalog before writing.
+  // Duplicate SKUs remain ambiguous and are skipped even when duplicates fall
+  // on different pagination pages.
+  const exactMatches = await findVariantsBySku(candidateProducts, locationId);
+  const pageVariantIds = new Map(
+    Array.from(candidatesBySku.entries()).map(([sku, variant]) => [sku, variant.id]),
+  );
+  const matches = exactMatches.matches.filter((match) =>
+    pageVariantIds.get(match.supplier.sku) === match.variant.id && match.inventoryLevelActive,
+  );
+  const matchedSkus = new Set(matches.map((match) => match.supplier.sku));
+  const ambiguousSkus = exactMatches.ambiguousSkus;
+  const unmatchedCount =
+    unmatchedLocationSkuCount +
+    exactMatches.unmatchedSkus.length +
+    candidateProducts.filter((product) => !matchedSkus.has(product.sku) && !ambiguousSkus.includes(product.sku)).length;
+
+  return {
+    matches,
+    ambiguousSkus,
+    unmatchedCount,
+    unmatchedLocationSkuCount,
+    processedCount,
+    nextCursor: cursor,
+    cycleComplete: !hasNextPage,
+  };
+}
+
 export async function writeShopifyUpdates(matches: MatchedVariant[], locationId: string, runId: string): Promise<{ priceUpdated: number; stockUpdated: number; skippedStock: number }> {
   let priceUpdated = 0;
   let stockUpdated = 0;
