@@ -8,14 +8,14 @@ const base = {
   brand: "Beko",
   ean: "1234567890123",
   disponibilitate_stoc: "In stoc",
-  pret_net: "1180.56",
+  pret_net: "214.55",
   taxa_verde_net: "15.00",
 };
 
-test("adaugă taxa verde, TVA-ul și adaosul Carpatik în prețul Marelvi", () => {
+test("aplică adaosul Carpatik o singură dată peste prețul B2B Marelvi cu TVA și taxa verde incluse", () => {
   const product = mapMarelviProduct(base);
-  assert.equal(product.price, 1735.96);
-  assert.equal(product.compareAtPrice, 1909.56);
+  assert.equal(product.price, 257.46);
+  assert.equal(product.compareAtPrice, 283.21);
   assert.equal(product.stock, 10);
 });
 
