@@ -12,10 +12,10 @@ const base = {
   taxa_verde_net: "15.00",
 };
 
-test("calculă prețul, prețul tăiat și stocul după regulile aprobate", () => {
+test("aplică adaosul la prețul Marelvi cu TVA și taxa verde incluse", () => {
   const product = mapMarelviProduct(base);
-  assert.equal(product.price, 1735.95);
-  assert.equal(product.compareAtPrice, 1909.55);
+  assert.equal(product.price, 1416.67);
+  assert.equal(product.compareAtPrice, 1558.34);
   assert.equal(product.stock, 10);
 });
 
