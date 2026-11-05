@@ -63,6 +63,7 @@ export type MarelviSyncResult = {
   runId?: string;
   feedCount?: number;
   batchCount?: number;
+  processedCount?: number;
   matchedCount?: number;
   unmatchedCount?: number;
   ambiguousCount?: number;
@@ -84,6 +85,7 @@ export async function runMarelviSync(): Promise<MarelviSyncResult> {
   const stateId = "primary";
   const now = new Date();
   const lockExpiry = new Date(now.getTime() + 6 * 60 * 1000);
+  const maxBatches = Math.min(Math.max(Number(process.env.MARELVI_MAX_BATCHES_PER_RUN || 10), 1), 10);
 
   await prisma.marelviSyncState.upsert({
     where: { id: stateId },
@@ -102,123 +104,164 @@ export async function runMarelviSync(): Promise<MarelviSyncResult> {
     const feed = await fetchFeed();
     const state = await prisma.marelviSyncState.findUniqueOrThrow({ where: { id: stateId } });
     const location = await findMarelviLocation();
-    const page = await findMarelviShopifyBatch(feed, state.shopifyCursor, location.id, BATCH_SIZE);
-    const pageProducts = page.matches.map((match) => match.supplier);
-    const skus = pageProducts.map((product) => product.sku);
-    const snapshots = skus.length
-      ? await prisma.marelviProductSnapshot.findMany({ where: { sku: { in: skus } } })
-      : [];
-    const bySku = new Map(snapshots.map((item) => [item.sku, item]));
-    const matches = page.matches.map((match) => {
-      const old = bySku.get(match.supplier.sku);
-      return {
-        ...match,
-        needsPriceSync: !old || old.lastPriceSyncedHash !== match.supplier.hash,
-        needsStockSync: !old || old.lastStockSyncedHash !== match.supplier.hash,
-      };
-    });
-    const pending = matches.filter((match) => match.needsPriceSync || match.needsStockSync);
-    const priceCandidates = pending.filter((match) => match.needsPriceSync).length;
-    const stockCandidates = pending.filter((match) => match.needsStockSync).length;
-    const zeroPriceSkus = matches.filter((match) => match.supplier.price === null).map((match) => match.supplier.sku);
+    let cursor: string | null = state.shopifyCursor;
+    let processedCount = 0;
+    let matchedCount = 0;
+    let unmatchedCount = 0;
+    let ambiguousCount = 0;
+    let priceCandidates = 0;
+    let stockCandidates = 0;
+    let priceUpdated = 0;
+    let stockUpdated = 0;
+    let stockSkipped = 0;
+    let unmatchedLocationSkuCount = 0;
+    let identityMismatchCount = 0;
+    let completedBatches = 0;
+    let cycleComplete = false;
+    const ambiguousSkus: string[] = [];
+    const zeroPriceSkus = new Set<string>();
+    const batchDetails: Array<Record<string, number | boolean>> = [];
 
     runId = (await prisma.marelviSyncRun.create({
-      data: {
-        dryRun,
-        feedCount: feed.length,
-        processedCount: page.processedCount,
-        priceCandidates,
-        stockCandidates,
-      },
+      data: { dryRun, feedCount: feed.length },
       select: { id: true },
     })).id;
 
-    let priceUpdated = 0;
-    let stockUpdated = 0;
-    const stockSkipped = matches.filter((match) =>
-      match.needsStockSync &&
-      (!match.inventoryTracked || !match.inventoryLevelActive || match.currentAvailable === null),
-    ).length;
+    for (let batchNo = 0; batchNo < maxBatches; batchNo += 1) {
+      const page = await findMarelviShopifyBatch(feed, cursor, location.id, BATCH_SIZE);
+      completedBatches += 1;
+      processedCount += page.processedCount;
+      matchedCount += page.matches.length;
+      unmatchedCount += page.unmatchedCount;
+      ambiguousCount += page.ambiguousSkus.length;
+      unmatchedLocationSkuCount += page.unmatchedLocationSkuCount;
+      identityMismatchCount += page.identityMismatchCount;
+      ambiguousSkus.push(...page.ambiguousSkus);
+      cursor = page.nextCursor;
+      cycleComplete = page.cycleComplete;
 
-    if (!dryRun && pending.length > 0) {
-      const written = await writeShopifyUpdates(pending, location.id, runId);
-      priceUpdated = written.priceUpdated;
-      stockUpdated = written.stockUpdated;
+      const pageProducts = page.matches.map((match) => match.supplier);
+      const skus = pageProducts.map((product) => product.sku);
+      const snapshots = skus.length
+        ? await prisma.marelviProductSnapshot.findMany({ where: { sku: { in: skus } } })
+        : [];
+      const bySku = new Map(snapshots.map((item) => [item.sku, item]));
+      const matches = page.matches.map((match) => {
+        const old = bySku.get(match.supplier.sku);
+        return {
+          ...match,
+          needsPriceSync: !old || old.lastPriceSyncedHash !== match.supplier.hash,
+          needsStockSync: !old || old.lastStockSyncedHash !== match.supplier.hash,
+        };
+      });
+      const pending = matches.filter((match) => match.needsPriceSync || match.needsStockSync);
+      priceCandidates += pending.filter((match) => match.needsPriceSync).length;
+      stockCandidates += pending.filter((match) => match.needsStockSync).length;
+      for (const match of matches) {
+        if (match.supplier.price === null) zeroPriceSkus.add(match.supplier.sku);
+      }
+      stockSkipped += matches.filter((match) =>
+        match.needsStockSync &&
+        (!match.inventoryTracked || !match.inventoryLevelActive || match.currentAvailable === null),
+      ).length;
+
+      if (!dryRun && pending.length > 0) {
+        const written = await writeShopifyUpdates(pending, location.id, runId);
+        priceUpdated += written.priceUpdated;
+        stockUpdated += written.stockUpdated;
+      }
+
+      if (!dryRun) {
+        const priceSyncedSkus = new Set(
+          matches
+            .filter((match) => match.needsPriceSync && match.supplier.price !== null)
+            .map((match) => match.supplier.sku),
+        );
+        const stockSyncedSkus = new Set(
+          matches
+            .filter((match) =>
+              match.needsStockSync &&
+              match.inventoryTracked &&
+              match.inventoryLevelActive &&
+              match.currentAvailable !== null,
+            )
+            .map((match) => match.supplier.sku),
+        );
+        const syncedAt = new Date();
+        for (const product of pageProducts) {
+          const data = mapForSnapshot(product);
+          const priceDone = priceSyncedSkus.has(product.sku);
+          const stockDone = stockSyncedSkus.has(product.sku);
+          await prisma.marelviProductSnapshot.upsert({
+            where: { sku: product.sku },
+            create: {
+              ...data,
+              lastPriceSyncedHash: priceDone ? product.hash : null,
+              lastStockSyncedHash: stockDone ? product.hash : null,
+              lastSyncedAt: priceDone || stockDone ? syncedAt : null,
+            },
+            update: {
+              ...data,
+              ...(priceDone ? { lastPriceSyncedHash: product.hash } : {}),
+              ...(stockDone ? { lastStockSyncedHash: product.hash } : {}),
+              ...(priceDone || stockDone ? { lastSyncedAt: syncedAt } : {}),
+            },
+          });
+        }
+      } else {
+        for (const product of pageProducts) {
+          await prisma.marelviProductSnapshot.upsert({
+            where: { sku: product.sku },
+            create: mapForSnapshot(product),
+            update: mapForSnapshot(product),
+          });
+        }
+      }
+
+      batchDetails.push({
+        batch: completedBatches,
+        processedCount: page.processedCount,
+        matchedCount: page.matches.length,
+        priceCandidates: pending.filter((match) => match.needsPriceSync).length,
+        stockCandidates: pending.filter((match) => match.needsStockSync).length,
+        cycleComplete: page.cycleComplete,
+      });
+
+      // Persist after each batch so a timeout resumes from the next Shopify variant.
+      await prisma.marelviSyncState.update({
+        where: { id: stateId },
+        data: {
+          shopifyCursor: cursor,
+          lastCycleAt: page.cycleComplete ? new Date() : undefined,
+        },
+      });
+      if (page.cycleComplete || page.processedCount === 0) break;
     }
 
-    if (!dryRun) {
-      const priceSyncedSkus = new Set(
-        matches
-          .filter((match) => match.needsPriceSync && match.supplier.price !== null)
-          .map((match) => match.supplier.sku),
-      );
-      const stockSyncedSkus = new Set(
-        matches
-          .filter((match) =>
-            match.needsStockSync &&
-            match.inventoryTracked &&
-            match.inventoryLevelActive &&
-            match.currentAvailable !== null,
-          )
-          .map((match) => match.supplier.sku),
-      );
-      const priceSyncedAt = new Date();
-      for (const product of pageProducts) {
-        const data = mapForSnapshot(product);
-        const priceDone = priceSyncedSkus.has(product.sku);
-        const stockDone = stockSyncedSkus.has(product.sku);
-        await prisma.marelviProductSnapshot.upsert({
-          where: { sku: product.sku },
-          create: {
-            ...data,
-            lastPriceSyncedHash: priceDone ? product.hash : null,
-            lastStockSyncedHash: stockDone ? product.hash : null,
-            lastSyncedAt: priceDone || stockDone ? priceSyncedAt : null,
-          },
-          update: {
-            ...data,
-            ...(priceDone ? { lastPriceSyncedHash: product.hash } : {}),
-            ...(stockDone ? { lastStockSyncedHash: product.hash } : {}),
-            ...(priceDone || stockDone ? { lastSyncedAt: priceSyncedAt } : {}),
-          },
-        });
-      }
-    } else {
-      for (const product of pageProducts) {
-        await prisma.marelviProductSnapshot.upsert({
-          where: { sku: product.sku },
-          create: mapForSnapshot(product),
-          update: mapForSnapshot(product),
-        });
-      }
-    }
-
-    const skippedCount = page.unmatchedCount + page.ambiguousSkus.length + stockSkipped;
     await prisma.marelviSyncRun.update({
       where: { id: runId },
       data: {
         status: dryRun ? "dry_run" : "completed",
         completedAt: new Date(),
-        matchedCount: matches.length,
-        unmatchedCount: page.unmatchedCount,
-        ambiguousCount: page.ambiguousSkus.length,
+        processedCount,
+        matchedCount,
+        unmatchedCount,
+        ambiguousCount,
+        priceCandidates,
+        stockCandidates,
         priceUpdated,
         stockUpdated,
-        skippedCount,
+        skippedCount: unmatchedCount + ambiguousCount + stockSkipped,
         details: {
-          ambiguousSkus: page.ambiguousSkus,
-          unmatchedLocationSkuCount: page.unmatchedLocationSkuCount,
-          identityMismatchCount: page.identityMismatchCount,
+          batches: batchDetails,
+          unmatchedLocationSkuCount,
+          identityMismatchCount,
           stockSkipped,
-          zeroPriceSkus,
+          zeroPriceSkus: Array.from(zeroPriceSkus),
+          ambiguousSkus: ambiguousSkus.slice(0, 200),
+          shopifyCursor: cursor,
+          cycleComplete,
         },
-      },
-    });
-    await prisma.marelviSyncState.update({
-      where: { id: stateId },
-      data: {
-        shopifyCursor: page.nextCursor,
-        lastCycleAt: page.cycleComplete ? new Date() : undefined,
       },
     });
 
@@ -227,21 +270,22 @@ export async function runMarelviSync(): Promise<MarelviSyncResult> {
       dryRun,
       runId,
       feedCount: feed.length,
-      batchCount: page.processedCount,
-      matchedCount: matches.length,
-      unmatchedCount: page.unmatchedCount,
-      ambiguousCount: page.ambiguousSkus.length,
+      batchCount: completedBatches,
+      processedCount,
+      matchedCount,
+      unmatchedCount,
+      ambiguousCount,
       priceCandidates,
       stockCandidates,
       priceUpdated,
       stockUpdated,
       stockSkipped,
-      unmatchedLocationSkuCount: page.unmatchedLocationSkuCount,
-      identityMismatchCount: page.identityMismatchCount,
-      cycleComplete: page.cycleComplete,
+      unmatchedLocationSkuCount,
+      identityMismatchCount,
+      cycleComplete,
       unmatchedSkus: [],
-      ambiguousSkus: page.ambiguousSkus,
-      zeroPriceSkus,
+      ambiguousSkus: ambiguousSkus.slice(0, 50),
+      zeroPriceSkus: Array.from(zeroPriceSkus).slice(0, 50),
     };
   } catch (error) {
     if (runId) {
@@ -258,7 +302,6 @@ export async function runMarelviSync(): Promise<MarelviSyncResult> {
     }).catch(() => undefined);
   }
 }
-
 export function feedFingerprint(products: MarelviProduct[]): string {
   return createHash("sha256").update(products.map((product) => product.hash).join("|")).digest("hex");
 }
