@@ -34,7 +34,7 @@ Set secrets in Vercel Project → Settings → Environment Variables; never put 
 4. Add the remaining secret environment variables in Vercel and deploy.
 5. Verify `/api/health`, then invoke `/api/cron/marelvi-sync` with `Authorization: Bearer <CRON_SECRET>` for a dry-run. Vercel Cron also sends this header when `CRON_SECRET` is configured.
 
-The cron runs five minutes after the NOD schedule and processes up to 10 batches of 1,000 Shopify variants per invocation (configurable with `MARELVI_MAX_BATCHES_PER_RUN`, capped at 10). The opaque Shopify pagination cursor is saved after every batch, so later invocations resume where the previous one stopped. Run summaries include per-batch counts and cycle completion. Shopify writes use only feed-matched variants already assigned to the dedicated Marelvi location and use inventory compare-and-swap values. Errors store safe codes only; API response bodies and the feed URL are not logged.
+The cron runs five minutes after the NOD schedule and processes up to 10 batches of 100 Shopify variants per invocation (configurable with `MARELVI_MAX_BATCHES_PER_RUN`, capped at 10). The opaque Shopify pagination cursor is saved after every batch, so later invocations resume where the previous one stopped. Run summaries include per-batch counts and cycle completion. Shopify writes use only feed-matched variants already assigned to the dedicated Marelvi location and use inventory compare-and-swap values. Errors store safe codes only; API response bodies and the feed URL are not logged.
 
 ## Local checks
 
