@@ -7,7 +7,7 @@ Standalone scheduled integration for Marelvi → Shopify Carpatik (`veprzg-ph.my
 - Shopify is the traversal source: process existing Shopify variants in cursor-based batches, then match each SKU against the current Marelvi feed. No product creation.
 - A variant is eligible for either price or stock updates only when its SKU exists in the Marelvi feed, it has a unique Shopify SKU match, and it already has an active inventory level at `Rudeni Marelvi depozit`. If both Marelvi EAN and Shopify barcode exist, they must also match. Products that fail any identity check are left unchanged.
 - Shopify variants at the Marelvi location whose SKU is absent from the feed are counted for visibility but left unchanged. Supplier feed items without a matching eligible Shopify variant are also left unchanged.
-- Purchase price is Marelvi `pret_net` (the current B2B price) plus `taxa_verde_net`, then VAT 21% and 20% markup: `(pret_net + taxa_verde_net) × 1.21 × 1.20`.
+- Selling price is Marelvi `pret_net` × 1.20. The Marelvi B2B price already includes VAT and the green fee; do not add `taxa_verde_net` or VAT again. Confirmed against AH611, displayed at 214.55 lei with VAT and green fee selected.
 - Artificial compare-at price is 10% above calculated selling price.
 - Availability mapping: `In stoc` → 10; `Stoc limitat` → 5; `La comanda` / `Comanda speciala` → 0.
 - Inventory is queried and written only at the existing `Rudeni Marelvi depozit` location. Products without an active level there are not eligible for either price or stock updates; untracked items are skipped for stock. The sync does not change tracking or activate inventory.
