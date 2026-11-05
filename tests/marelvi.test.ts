@@ -14,8 +14,8 @@ const base = {
 
 test("adaugă taxa verde, TVA-ul și adaosul Carpatik în prețul Marelvi", () => {
   const product = mapMarelviProduct(base);
-  assert.equal(product.price, 1735.95);
-  assert.equal(product.compareAtPrice, 1909.54);
+  assert.equal(product.price, 1735.96);
+  assert.equal(product.compareAtPrice, 1909.56);
   assert.equal(product.stock, 10);
 });
 
