@@ -64,9 +64,8 @@ export function mapMarelviProduct(raw: Record<string, unknown>): MarelviProduct 
   const greenFeeNet = parseAmount(raw.taxa_verde_net, "taxa_verde_net", sku);
   if (netPrice < 0) throw new Error(`Preț net negativ pentru SKU ${sku}`);
 
-  // Marelvi's B2B price shown for AH611 includes VAT and green fee.
-  // Apply only Carpatik's 20% markup; do not add those taxes again.
-  const price = netPrice > 0 ? money(netPrice * 1.2) : null;
+  // Marelvi feed values are net of VAT and green fee. Add both, then Carpatik's 20% markup.
+  const price = netPrice > 0 ? money((netPrice + greenFeeNet) * 1.21 * 1.2) : null;
   const compareAtPrice = price === null ? null : money(price * 1.1);
   const title = String(raw.denumire ?? "").trim();
   const brand = String(raw.brand ?? "").trim();
