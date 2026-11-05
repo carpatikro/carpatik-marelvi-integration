@@ -64,8 +64,9 @@ export function mapMarelviProduct(raw: Record<string, unknown>): MarelviProduct 
   const greenFeeNet = parseAmount(raw.taxa_verde_net, "taxa_verde_net", sku);
   if (netPrice < 0) throw new Error(`Preț net negativ pentru SKU ${sku}`);
 
-  // Marelvi feed values are net of VAT and green fee. Add both, then Carpatik's 20% markup.
-  const price = netPrice > 0 ? money((netPrice + greenFeeNet) * 1.21 * 1.2) : null;
+  // Convert Marelvi net price plus green fee to its VAT-inclusive B2B price, round to cents, then add Carpatik's 20% markup.
+  const marelviB2bPrice = money((netPrice + greenFeeNet) * 1.21);
+  const price = marelviB2bPrice > 0 ? money(marelviB2bPrice * 1.2) : null;
   const compareAtPrice = price === null ? null : money(price * 1.1);
   const title = String(raw.denumire ?? "").trim();
   const brand = String(raw.brand ?? "").trim();
