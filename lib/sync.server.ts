@@ -3,7 +3,7 @@ import { prisma } from "@/app/db.server";
 import { parseMarelviFeed, type MarelviProduct } from "@/lib/marelvi";
 import { findMarelviLocation, findMarelviShopifyBatch, writeShopifyUpdates } from "@/lib/shopify.server";
 
-const BATCH_SIZE = Math.min(Math.max(Number(process.env.MARELVI_BATCH_SIZE || 1000), 25), 1000);
+const BATCH_SIZE = Math.min(Math.max(Number(process.env.MARELVI_BATCH_SIZE || 100), 25), 100);
 
 function required(name: string): string {
   const value = process.env[name];
