@@ -28,10 +28,34 @@ function validateFeedUrl(): string {
 
 async function fetchFeed(): Promise<MarelviProduct[]> {
   const url = validateFeedUrl();
-  const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(45_000) });
-  if (!response.ok) throw new Error(`MARELVI_FEED_HTTP_${response.status}`);
-  const contentType = response.headers.get("content-type") || "";
-  const body = await response.text();
+  let body = "";
+  let contentType = "";
+  // Two bounded attempts leave time for Shopify batches within the 300s invocation.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(60_000) });
+      if (!response.ok) {
+        const code = `MARELVI_FEED_HTTP_${response.status}`;
+        await response.body?.cancel();
+        if (attempt === 0 && (response.status === 408 || response.status === 429 || response.status >= 500)) {
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+          continue;
+        }
+        throw new Error(code);
+      }
+      contentType = response.headers.get("content-type") || "";
+      body = await response.text();
+      break;
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "";
+      const transient = name === "TimeoutError" || name === "AbortError" || name === "TypeError";
+      if (!transient) throw error;
+      if (attempt === 1) {
+        throw new Error(name === "TypeError" ? "MARELVI_FEED_NETWORK_ERROR" : "MARELVI_FEED_TIMEOUT");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
   if (body.length > 25_000_000) throw new Error("MARELVI_FEED_TOO_LARGE");
   let json: unknown;
   try { json = JSON.parse(body); } catch { throw new Error("MARELVI_FEED_INVALID_JSON"); }
@@ -101,7 +125,9 @@ export async function runMarelviSync(): Promise<MarelviSyncResult> {
   let runId: string | undefined;
   try {
     const dryRun = process.env.MARELVI_LIVE_SYNC_ENABLED !== "true";
+    runId = (await prisma.marelviSyncRun.create({ data: { dryRun }, select: { id: true } })).id;
     const feed = await fetchFeed();
+    await prisma.marelviSyncRun.update({ where: { id: runId }, data: { feedCount: feed.length } });
     const state = await prisma.marelviSyncState.findUniqueOrThrow({ where: { id: stateId } });
     const location = await findMarelviLocation();
     let cursor: string | null = state.shopifyCursor;
@@ -122,10 +148,6 @@ export async function runMarelviSync(): Promise<MarelviSyncResult> {
     const zeroPriceSkus = new Set<string>();
     const batchDetails: Array<Record<string, number | boolean>> = [];
 
-    runId = (await prisma.marelviSyncRun.create({
-      data: { dryRun, feedCount: feed.length },
-      select: { id: true },
-    })).id;
 
     for (let batchNo = 0; batchNo < maxBatches; batchNo += 1) {
       const page = await findMarelviShopifyBatch(feed, cursor, location.id, BATCH_SIZE);
