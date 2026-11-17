@@ -21,11 +21,33 @@ async function handle(request: Request) {
   if (!authorized(request)) {
     return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401, headers: { "cache-control": "no-store" } });
   }
+  const startedAt = Date.now();
   try {
     const result = await runMarelviSync();
+    console.info("Marelvi sync summary", {
+      status: result.status,
+      dryRun: result.dryRun,
+      durationMs: Date.now() - startedAt,
+      skippedLock: result.status === "busy",
+      feedCount: result.feedCount,
+      batchCount: result.batchCount,
+      processedCount: result.processedCount,
+      matchedCount: result.matchedCount,
+      unmatchedCount: result.unmatchedCount,
+      ambiguousCount: result.ambiguousCount,
+      priceCandidates: result.priceCandidates,
+      stockCandidates: result.stockCandidates,
+      priceUpdated: result.priceUpdated,
+      stockUpdated: result.stockUpdated,
+      stockSkipped: result.stockSkipped,
+      unmatchedLocationSkuCount: result.unmatchedLocationSkuCount,
+      identityMismatchCount: result.identityMismatchCount,
+      cycleComplete: result.cycleComplete,
+    });
     return NextResponse.json(result, { status: result.status === "busy" ? 409 : 200, headers: { "cache-control": "no-store" } });
   } catch (error) {
     const code = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message) ? error.message : "SYNC_FAILED";
+    console.error("Marelvi sync failed", { errorCode: code, durationMs: Date.now() - startedAt });
     return NextResponse.json({ error: code }, { status: 500, headers: { "cache-control": "no-store" } });
   }
 }
